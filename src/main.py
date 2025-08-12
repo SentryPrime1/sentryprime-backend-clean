@@ -1,171 +1,249 @@
-# SentryPrime AI Backend with Authentication - Final CORS Fix v2
-from flask import Flask, jsonify, request
-# The "from flask_cors import CORS" line has been removed
-import requests
 import os
+import datetime
+from functools import wraps
+import jwt
+from flask import Flask, jsonify, request
+from flask_cors import CORS
+import requests
 from bs4 import BeautifulSoup
 import openai
-import hashlib # For password hashing
-import secrets # For generating secure tokens
 
-# --- Configuration ---
+# --- CONFIGURATION ---
 app = Flask(__name__)
-
-# The "CORS(app, ...)" line has been removed
-
+# Use a more specific CORS configuration for production
+CORS(app, resources={r"/api/*": {"origins": "*"}}) # We'll keep this permissive for now
+app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'your-default-secret-key')
 openai.api_key = os.environ.get("OPENAI_API_KEY")
 
-# --- In-Memory Database (for now) ---
-# This will reset if the server restarts. A real database is the next step.
-users = {} # Will store users by email
-active_tokens = {} # Will map tokens to user emails
+# --- IN-MEMORY DATABASE ---
+# This acts as a temporary database. It will reset if the server restarts.
+db = {
+    "users": {},
+    "websites": {},
+    "scans": {}
+}
+# Use counters to simulate auto-incrementing IDs
+user_id_counter = 1
+website_id_counter = 1
+scan_id_counter = 1
 
-# --- Authentication Endpoints ---
+# --- AUTHENTICATION DECORATOR ---
+def token_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        token = None
+        if 'Authorization' in request.headers:
+            try:
+                token = request.headers['Authorization'].split(" ")[1]
+            except IndexError:
+                return jsonify({'message': 'Token is missing or malformed!'}), 401
+        
+        if not token:
+            return jsonify({'message': 'Token is missing!'}), 401
 
+        try:
+            data = jwt.decode(token, app.config['SECRET_KEY'], algorithms=["HS256"])
+            current_user = db['users'].get(data['user_id'])
+            if not current_user:
+                 return jsonify({'message': 'User not found!'}), 401
+        except jwt.ExpiredSignatureError:
+            return jsonify({'message': 'Token has expired!'}), 401
+        except jwt.InvalidTokenError:
+            return jsonify({'message': 'Token is invalid!'}), 401
+
+        return f(current_user, *args, **kwargs)
+    return decorated
+
+# --- AUTHENTICATION ROUTES ---
 @app.route('/api/auth/register', methods=['POST'])
-def register_user():
+def register():
+    global user_id_counter
     data = request.get_json()
     if not data or not all(k in data for k in ['firstName', 'lastName', 'email', 'password']):
-        return jsonify({"error": "Missing required fields"}), 400
-
-    email = data['email'].lower()
-    if email in users:
-        return jsonify({"error": "An account with this email already exists"}), 409
-
-    # Securely hash the password
-    hashed_password = hashlib.sha256(data['password'].encode()).hexdigest()
-
-    users[email] = {
-        "firstName": data['firstName'],
-        "lastName": data['lastName'],
-        "password_hash": hashed_password
-    }
+        return jsonify({'error': 'Missing required fields'}), 400
     
-    # Automatically log the user in by creating a token
-    token = secrets.token_hex(24)
-    active_tokens[token] = email
+    email = data['email'].lower()
+    if any(u['email'] == email for u in db['users'].values()):
+        return jsonify({'error': 'An account with this email already exists'}), 409
 
-    return jsonify({
-        "message": "User registered successfully",
-        "token": token,
-        "user": {"firstName": data['firstName'], "email": email}
-    }), 201
+    user = {
+        'id': user_id_counter,
+        'firstName': data['firstName'],
+        'lastName': data['lastName'],
+        'email': email,
+        'password': data['password'], # In a real app, hash this!
+        'created_at': datetime.datetime.utcnow()
+    }
+    db['users'][user_id_counter] = user
+    user_id_counter += 1
+    
+    token = jwt.encode({
+        'user_id': user['id'],
+        'exp': datetime.datetime.utcnow() + datetime.timedelta(hours=24)
+    }, app.config['SECRET_KEY'], algorithm="HS256")
+
+    return jsonify({'token': token, 'user': {'id': user['id'], 'firstName': user['firstName'], 'email': user['email']}}), 201
 
 @app.route('/api/auth/login', methods=['POST'])
-def login_user():
+def login():
     data = request.get_json()
     if not data or not all(k in data for k in ['email', 'password']):
-        return jsonify({"error": "Email and password are required"}), 400
+        return jsonify({'error': 'Email and password are required'}), 400
 
     email = data['email'].lower()
-    user = users.get(email)
-    
-    if not user:
-        return jsonify({"error": "Invalid credentials"}), 401
+    user = next((u for u in db['users'].values() if u['email'] == email), None)
 
-    # Check if the provided password matches the stored hash
-    hashed_password = hashlib.sha256(data['password'].encode()).hexdigest()
-    if hashed_password != user['password_hash']:
-        return jsonify({"error": "Invalid credentials"}), 401
-        
-    # Create a new secure token for the session
-    token = secrets.token_hex(24)
-    active_tokens[token] = email
+    if not user or user['password'] != data['password']:
+        return jsonify({'error': 'Invalid credentials'}), 401
 
-    return jsonify({
-        "message": "Login successful",
-        "token": token,
-        "user": {"firstName": user['firstName'], "email": email}
-    })
+    token = jwt.encode({
+        'user_id': user['id'],
+        'exp': datetime.datetime.utcnow() + datetime.timedelta(hours=24)
+    }, app.config['SECRET_KEY'], algorithm="HS256")
 
-# --- Helper Function for AI Analysis ---
-def get_ai_recommendation(violation_text):
-    if not openai.api_key:
-        return "AI analysis is not configured."
+    return jsonify({'token': token, 'user': {'id': user['id'], 'firstName': user['firstName'], 'email': user['email']}})
 
-    try:
-        system_prompt = "You are an expert web accessibility consultant. Provide a clear, concise, and actionable recommendation for fixing a specific violation. Structure your response in three parts: 1. **What it is:** 2. **Why it matters:** 3. **How to fix it:** (with a code example)."
-        user_prompt = f"Please provide an accessibility recommendation for the following violation: '{violation_text}'"
-        response = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo",
-            messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],
-            temperature=0.5, max_tokens=250
-        )
-        return response.choices[0].message['content'].strip()
-    except Exception as e:
-        return f"Could not get AI recommendation: {str(e)}"
-
-# --- Core API Endpoints ---
-@app.route('/')
-def health():
-    ai_status = "Ready" if openai.api_key else "Not Configured"
-    return jsonify({
-        "status": "healthy", "service": "SentryPrime AI Report Engine",
-        "version": "3.1.0 (Permissive CORS)", "ai_status": ai_status
-    })
-
-# This is a placeholder for where real dashboard data would be fetched
+# --- DASHBOARD API ROUTES ---
 @app.route('/api/dashboard/stats', methods=['GET'])
-def get_stats():
-    # In a real app, you'd check the token and fetch real data
+@token_required
+def get_dashboard_stats(current_user):
+    user_websites = [w for w in db['websites'].values() if w['user_id'] == current_user['id']]
+    user_scans = [s for s in db['scans'].values() if s['website_id'] in [w['id'] for w in user_websites]]
+    
+    total_violations = sum(s.get('total_violations', 0) for s in user_scans)
+    avg_compliance = (100 - total_violations) if user_scans else 100 # Simplified logic
+
     return jsonify({
-        "overview": {"total_websites": 0, "avg_compliance_score": 0, "total_violations": 0, "total_scans": 0},
-        "recent_activity": [],
-        "quick_stats": {"websites_monitored": 0, "scans_this_month": 0, "avg_pages_per_scan": 0, "last_scan_date": None}
+        "overview": {
+            "total_websites": len(user_websites),
+            "avg_compliance_score": int(avg_compliance),
+            "total_violations": total_violations,
+            "total_scans": len(user_scans)
+        },
+        "recent_activity": sorted(user_scans, key=lambda x: x['scan_date'], reverse=True)[:5],
+        "quick_stats": {
+            "websites_monitored": len(user_websites),
+            "scans_this_month": len(user_scans), # Simplified
+            "last_scan_date": user_scans[-1]['scan_date'] if user_scans else None
+        }
     })
 
-@app.route('/api/dashboard/websites', methods=['GET'])
-def get_websites():
-    return jsonify({"websites": []})
+@app.route('/api/dashboard/websites', methods=['GET', 'POST'])
+@token_required
+def manage_websites(current_user):
+    global website_id_counter
+    if request.method == 'POST':
+        data = request.get_json()
+        if not data or not data.get('url'):
+            return jsonify({'error': 'URL is required'}), 400
+        
+        website = {
+            'id': website_id_counter,
+            'user_id': current_user['id'],
+            'url': data['url'],
+            'name': data.get('name', data['url']),
+            'created_at': datetime.datetime.utcnow(),
+            'last_scan_date': None,
+            'compliance_score': 100,
+            'total_violations': 0,
+            'risk_level': 'Low'
+        }
+        db['websites'][website_id_counter] = website
+        website_id_counter += 1
+        return jsonify(website), 201
+
+    # GET request
+    user_websites = [w for w in db['websites'].values() if w['user_id'] == current_user['id']]
+    return jsonify({'websites': user_websites})
 
 @app.route('/api/dashboard/scans', methods=['GET'])
-def get_scans():
-    return jsonify({"scans": []})
+@token_required
+def get_user_scans(current_user):
+    user_websites = [w['id'] for w in db['websites'].values() if w['user_id'] == current_user['id']]
+    user_scans = [s for s in db['scans'].values() if s['website_id'] in user_websites]
+    return jsonify({'scans': sorted(user_scans, key=lambda x: x['scan_date'], reverse=True)})
 
-
-@app.route('/api/scan/ai-enhanced', methods=['POST'])
-def ai_enhanced_scan():
-    # A real implementation would check for a valid token here
+# --- SCANNING ROUTE ---
+@app.route('/api/dashboard/scan', methods=['POST'])
+@token_required
+def trigger_scan(current_user):
+    global scan_id_counter
     data = request.get_json()
-    if not data or 'url' not in data:
-        return jsonify({"error": "URL is required"}), 400
-    
-    url = data.get('url')
+    if not data or not data.get('url') or not data.get('website_id'):
+        return jsonify({'error': 'URL and Website ID are required'}), 400
+
+    website_id = data['website_id']
+    website = db['websites'].get(website_id)
+    if not website or website['user_id'] != current_user['id']:
+        return jsonify({'error': 'Website not found or access denied'}), 404
+
+    # --- Perform the actual scan ---
     try:
-        response = requests.get(url, timeout=15)
+        response = requests.get(data['url'], timeout=15)
         response.raise_for_status()
         soup = BeautifulSoup(response.content, 'html.parser')
-        violations = []
         images = soup.find_all('img')
-        for img in images:
-            if not img.has_attr('alt') or img['alt'] == '':
-                violations.append({"type": "Missing Alt Text", "element_tag": str(img)})
-        
-        ai_enhanced_results = []
-        for violation in violations[:3]: # Limit to 3 for faster testing
-            recommendation = get_ai_recommendation(f"{violation['type']} on element: {violation['element_tag']}")
-            violation['ai_recommendation'] = recommendation
-            ai_enhanced_results.append(violation)
-
-        return jsonify({
-            "url": url, "violations_count": len(ai_enhanced_results),
-            "results": ai_enhanced_results, "status": "completed_ai_analysis"
-        })
+        violations = [str(img) for img in images if not img.has_attr('alt') or img['alt'] == '']
+        num_violations = len(violations)
     except Exception as e:
-        return jsonify({"error": f"An unexpected error occurred: {str(e)}"}), 500
+        return jsonify({'error': f"Failed to scan URL: {str(e)}"}), 500
+    # --- End of scan ---
 
-# --- Manual CORS Handling ---
-# This function will run after each request to add the necessary headers.
-@app.after_request
-def after_request(response):
-    header = response.headers
-    header['Access-Control-Allow-Origin'] = 'https://sentryprime-frontend-final.vercel.app'
-    # This line is updated to be more permissive for dashboard requests
-    header['Access-Control-Allow-Headers'] = '*' 
-    header['Access-Control-Allow-Methods'] = 'POST, GET, OPTIONS, PUT, DELETE'
-    return response
-# --- End of Manual CORS Handling ---
+    scan_result = {
+        'id': scan_id_counter,
+        'website_id': website_id,
+        'website_name': website['name'],
+        'url': data['url'],
+        'scan_date': datetime.datetime.utcnow(),
+        'status': 'completed',
+        'total_violations': num_violations,
+        'serious_violations': num_violations, # Simplified
+        'moderate_violations': 0,
+        'compliance_score': max(0, 100 - num_violations), # Simplified
+        'risk_level': 'High' if num_violations > 10 else 'Moderate' if num_violations > 0 else 'Low'
+    }
+    db['scans'][scan_id_counter] = scan_result
+    scan_id_counter += 1
+
+    # Update website record
+    website['last_scan_date'] = scan_result['scan_date']
+    website['compliance_score'] = scan_result['compliance_score']
+    website['total_violations'] = scan_result['total_violations']
+    website['risk_level'] = scan_result['risk_level']
+
+    return jsonify(scan_result), 201
+
+# --- HEALTH CHECK ---
+@app.route('/')
+def health_check():
+    return jsonify({'status': 'healthy', 'service': 'SentryPrime Final Backend'}), 200
 
 if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000 ))
-    app.run(host='0.0.0.0', port=port, debug=False)
+    port = int(os.environ.get('PORT', 5000))
+    # Use gunicorn for production if available, otherwise use Flask's dev server
+    if os.environ.get('RAILWAY_ENVIRONMENT') == 'production':
+        from gunicorn.app.base import BaseApplication
+
+        class StandaloneApplication(BaseApplication):
+            def __init__(self, app, options=None):
+                self.options = options or {}
+                self.application = app
+                super().__init__()
+
+            def load_config(self):
+                config = {key: value for key, value in self.options.items()
+                          if key in self.cfg.settings and value is not None}
+                for key, value in config.items():
+                    self.cfg.set(key.lower(), value)
+
+            def load(self):
+                return self.application
+
+        options = {
+            'bind': f'0.0.0.0:{port}',
+            'workers': 4,
+            'worker_class': 'gevent',
+        }
+        StandaloneApplication(app, options).run()
+    else:
+        app.run(host='0.0.0.0', port=port, debug=True)
