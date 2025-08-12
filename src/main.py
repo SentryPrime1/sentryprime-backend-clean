@@ -1,4 +1,4 @@
-# SentryPrime AI Backend with Authentication - Manual CORS Fix
+# SentryPrime AI Backend with Authentication - Final CORS Fix v2
 from flask import Flask, jsonify, request
 # The "from flask_cors import CORS" line has been removed
 import requests
@@ -101,8 +101,27 @@ def health():
     ai_status = "Ready" if openai.api_key else "Not Configured"
     return jsonify({
         "status": "healthy", "service": "SentryPrime AI Report Engine",
-        "version": "3.0.0 (Manual CORS)", "ai_status": ai_status
+        "version": "3.1.0 (Permissive CORS)", "ai_status": ai_status
     })
+
+# This is a placeholder for where real dashboard data would be fetched
+@app.route('/api/dashboard/stats', methods=['GET'])
+def get_stats():
+    # In a real app, you'd check the token and fetch real data
+    return jsonify({
+        "overview": {"total_websites": 0, "avg_compliance_score": 0, "total_violations": 0, "total_scans": 0},
+        "recent_activity": [],
+        "quick_stats": {"websites_monitored": 0, "scans_this_month": 0, "avg_pages_per_scan": 0, "last_scan_date": None}
+    })
+
+@app.route('/api/dashboard/websites', methods=['GET'])
+def get_websites():
+    return jsonify({"websites": []})
+
+@app.route('/api/dashboard/scans', methods=['GET'])
+def get_scans():
+    return jsonify({"scans": []})
+
 
 @app.route('/api/scan/ai-enhanced', methods=['POST'])
 def ai_enhanced_scan():
@@ -137,14 +156,12 @@ def ai_enhanced_scan():
 
 # --- Manual CORS Handling ---
 # This function will run after each request to add the necessary headers.
-# --- Manual CORS Handling ---
 @app.after_request
 def after_request(response):
     header = response.headers
-    # --- CHANGE THIS LINE ---
-    header['Access-Control-Allow-Origin'] = '*' 
-    # --- END OF CHANGE ---
-    header['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
+    header['Access-Control-Allow-Origin'] = 'https://sentryprime-frontend-final.vercel.app'
+    # This line is updated to be more permissive for dashboard requests
+    header['Access-Control-Allow-Headers'] = '*' 
     header['Access-Control-Allow-Methods'] = 'POST, GET, OPTIONS, PUT, DELETE'
     return response
 # --- End of Manual CORS Handling ---
@@ -152,4 +169,3 @@ def after_request(response):
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000 ))
     app.run(host='0.0.0.0', port=port, debug=False)
-
