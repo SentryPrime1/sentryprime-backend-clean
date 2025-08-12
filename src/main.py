@@ -1,9 +1,9 @@
-# SentryPrime Minimal AI Backend - Clean Start
+# SentryPrime Minimal AI Backend - Now with BeautifulSoup
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 import requests
 import os
-# We will add beautifulsoup and openai back later
+from bs4 import BeautifulSoup # Now we can use this!
 
 app = Flask(__name__)
 CORS(app)
@@ -14,13 +14,13 @@ def health():
     return jsonify({
         "status": "healthy",
         "service": "SentryPrime AI Backend - Clean Version",
-        "version": "1.0.0",
+        "version": "1.1.0 (BeautifulSoup Enabled)",
         "message": "Ready to integrate AI features."
     })
 
 @app.route('/api/scan/basic', methods=['POST'])
 def basic_scan_website():
-    """Performs a very basic scan for missing image alt text."""
+    """Performs an improved basic scan using BeautifulSoup."""
     data = request.get_json()
     if not data or 'url' not in data:
         return jsonify({"error": "URL is required"}), 400
@@ -29,21 +29,27 @@ def basic_scan_website():
     
     try:
         response = requests.get(url, timeout=15)
-        response.raise_for_status()  # Raise an exception for bad status codes
+        response.raise_for_status()
         
-        # A proper parser like beautifulsoup4 is needed for real analysis
-        # This is a placeholder to confirm functionality
-        if '<img' in response.text and 'alt=' not in response.text:
-            violations_count = 1
-            status = "completed_basic"
-        else:
-            violations_count = 0
-            status = "completed_basic"
+        # Use BeautifulSoup to parse the HTML
+        soup = BeautifulSoup(response.content, 'html.parser')
+        
+        violations = []
+        
+        # More accurate check for missing alt text
+        images = soup.find_all('img')
+        for img in images:
+            # Check if alt attribute is missing or empty
+            if not img.has_attr('alt') or img['alt'] == '':
+                # Try to get a source snippet for context
+                src = img.get('src', 'Unknown source')
+                violations.append(f"Image missing alt text. (Source: ...{src[-30:]})")
 
         return jsonify({
             "url": url,
-            "violations_count": violations_count,
-            "status": status
+            "violations_count": len(violations),
+            "violations_found": violations, # Send back the actual violations
+            "status": "completed_html_parse"
         })
         
     except requests.exceptions.RequestException as e:
@@ -52,6 +58,5 @@ def basic_scan_website():
         return jsonify({"error": f"An unexpected error occurred: {str(e)}"}), 500
 
 if __name__ == '__main__':
-    # Use the PORT environment variable provided by Railway
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=True)
