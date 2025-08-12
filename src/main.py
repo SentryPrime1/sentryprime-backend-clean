@@ -11,7 +11,7 @@ import openai
 # --- CONFIGURATION ---
 app = Flask(__name__)
 # Use a more specific CORS configuration for production
-CORS(app, resources={r"/api/*": {"origins": "*"}}) # We'll keep this permissive for now
+CORS(app, resources={r"/api/*": {"origins": "*"}}, allow_headers=["Content-Type", "Authorization"])
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'your-default-secret-key')
 openai.api_key = os.environ.get("OPENAI_API_KEY")
 
