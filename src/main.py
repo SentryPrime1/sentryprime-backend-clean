@@ -10,7 +10,7 @@ import secrets # For generating secure tokens
 
 # --- Configuration ---
 app = Flask(__name__)
-CORS(app)
+CORS(app, resources={r"/api/*": {"origins": "https://sentryprime-frontend-final.vercel.app"}} )
 openai.api_key = os.environ.get("OPENAI_API_KEY")
 
 # --- In-Memory Database (for now) ---
