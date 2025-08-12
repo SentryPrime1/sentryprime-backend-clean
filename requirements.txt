@@ -5,3 +5,4 @@ beautifulsoup4==4.12.2
 openai==0.28.1
 PyJWT==2.8.0
 gunicorn==21.2.0
+gevent>=1.4
