@@ -137,12 +137,15 @@ def ai_enhanced_scan():
 
 # --- Manual CORS Handling ---
 # This function will run after each request to add the necessary headers.
+# --- Manual CORS Handling ---
 @app.after_request
 def after_request(response):
     header = response.headers
-    header['Access-Control-Allow-Origin'] = 'https://sentryprime-frontend-final.vercel.app'
+    # --- CHANGE THIS LINE ---
+    header['Access-Control-Allow-Origin'] = '*' 
+    # --- END OF CHANGE ---
     header['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
-    header['Access-Control-Allow-Methods'] = 'POST, GET, OPTIONS, PUT, DELETE' # Added more methods
+    header['Access-Control-Allow-Methods'] = 'POST, GET, OPTIONS, PUT, DELETE'
     return response
 # --- End of Manual CORS Handling ---
 
