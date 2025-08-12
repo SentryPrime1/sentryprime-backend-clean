@@ -1,6 +1,5 @@
 # SentryPrime AI Backend with Authentication - Final CORS Fix
 from flask import Flask, jsonify, request
-from flask_cors import CORS
 import requests
 import os
 from bs4 import BeautifulSoup
@@ -137,7 +136,16 @@ def ai_enhanced_scan():
         })
     except Exception as e:
         return jsonify({"error": f"An unexpected error occurred: {str(e)}"}), 500
-
+# --- Manual CORS Handling ---
+# This function will run after each request to add the necessary headers.
+@app.after_request
+def after_request(response):
+    header = response.headers
+    header['Access-Control-Allow-Origin'] = 'https://sentryprime-frontend-final.vercel.app'
+    header['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
+    header['Access-Control-Allow-Methods'] = 'POST, GET, OPTIONS'
+    return response
+# --- End of Manual CORS Handling ---
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=False)
