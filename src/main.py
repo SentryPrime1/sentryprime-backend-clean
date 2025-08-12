@@ -1,4 +1,4 @@
-# SentryPrime AI Backend with Authentication
+# SentryPrime AI Backend with Authentication - Final CORS Fix
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 import requests
@@ -10,7 +10,12 @@ import secrets # For generating secure tokens
 
 # --- Configuration ---
 app = Flask(__name__)
-CORS(app, resources={r"/api/*": {"origins": "https://sentryprime-frontend-final.vercel.app"}} )
+
+# --- THE DEFINITIVE CORS FIX ---
+# Allow all requests originating from the Vercel frontend domain
+CORS(app, origins="https://sentryprime-frontend-final.vercel.app", supports_credentials=True )
+# --- END OF FIX ---
+
 openai.api_key = os.environ.get("OPENAI_API_KEY")
 
 # --- In-Memory Database (for now) ---
@@ -99,7 +104,7 @@ def health():
     ai_status = "Ready" if openai.api_key else "Not Configured"
     return jsonify({
         "status": "healthy", "service": "SentryPrime AI Report Engine",
-        "version": "2.1.0 (Auth Enabled)", "ai_status": ai_status
+        "version": "2.2.0 (CORS Fixed)", "ai_status": ai_status
     })
 
 @app.route('/api/scan/ai-enhanced', methods=['POST'])
