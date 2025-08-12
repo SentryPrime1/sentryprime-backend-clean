@@ -12,8 +12,8 @@ import secrets # For generating secure tokens
 app = Flask(__name__)
 
 # --- THE DEFINITIVE CORS FIX ---
-# Allow all requests originating from the Vercel frontend domain
-CORS(app, origins="https://sentryprime-frontend-final.vercel.app", supports_credentials=True )
+# Allow all requests from the Vercel frontend for any API route
+CORS(app, resources={r"/api/*": {"origins": "https://sentryprime-frontend-final.vercel.app"}}, supports_credentials=True )
 # --- END OF FIX ---
 
 openai.api_key = os.environ.get("OPENAI_API_KEY")
